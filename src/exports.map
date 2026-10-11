@@ -1,0 +1,17 @@
+/* Everything libheapfdr.so shows to the program. Anything else stays local. */
+{
+  global:
+    malloc;
+    calloc;
+    realloc;
+    reallocarray;
+    free;
+    posix_memalign;
+    aligned_alloc;
+    memalign;
+    valloc;
+    pvalloc;
+    __libc_start_main;
+  local:
+    *;
+};

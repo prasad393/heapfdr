@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Add source file and line numbers to a heapfdr report.
+
+usage: heapfdr-symbolize [report.log]      (reads stdin if no file is given)
+
+Frames such as
+
+    #2   0x000055d1c0de1a2b  decode+0x5a  (telemetry-demo:0x1a2b)
+
+are looked up with addr2line, using the module paths listed at the end of
+the report. Needs binutils, and the program built with -g.
+"""
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+from collections import defaultdict
+
+FRAME = re.compile(r"\((?P<module>[^():\s]+):(?P<addr>0x[0-9a-f]+)\)\s*$")
+MODULE = re.compile(r"\bmodule (?P<name>\S+) = (?P<path>.+?)\s*$")
+
+
+def short_path(path):
+    """Show paths under the current directory relative to it."""
+    if os.path.isabs(path):
+        rel = os.path.relpath(path)
+        if not rel.startswith(".."):
+            return rel
+    return path
+
+
+def lookup(binary, addrs):
+    """Map each address to (function, 'file:line') where addr2line knows it."""
+    result = subprocess.run(
+        ["addr2line", "-C", "-f", "-e", binary, *addrs],
+        capture_output=True, text=True, check=False,
+    )
+    lines = result.stdout.splitlines()
+    places = {}
+    for addr, func, loc in zip(addrs, lines[0::2], lines[1::2]):
+        loc = loc.split(" (discriminator")[0]
+        if loc.startswith("??") or loc.endswith(":0") or loc.endswith(":?"):
+            continue
+        file, _, line = loc.rpartition(":")
+        places[addr] = (func, f"{short_path(file)}:{line}")
+    return places
+
+
+def main(argv):
+    if len(argv) > 2 or (len(argv) == 2 and argv[1] in ("-h", "--help")):
+        print(__doc__.strip())
+        return 0 if len(argv) == 2 else 2
+    if not shutil.which("addr2line"):
+        print("heapfdr-symbolize: addr2line not found (install binutils)", file=sys.stderr)
+        return 1
+
+    if len(argv) == 2:
+        with open(argv[1], encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    else:
+        text = sys.stdin.read()
+    lines = text.splitlines()
+
+    modules = {}
+    wanted = defaultdict(set)
+    for line in lines:
+        m = MODULE.search(line)
+        if m:
+            modules[m["name"]] = m["path"]
+            continue
+        f = FRAME.search(line)
+        if f:
+            wanted[f["module"]].add(f["addr"])
+
+    places = {}
+    for name, addrs in wanted.items():
+        binary = modules.get(name, name)
+        if not os.path.exists(binary):
+            continue
+        ordered = sorted(addrs, key=lambda a: int(a, 16))
+        for addr, info in lookup(binary, ordered).items():
+            places[(name, addr)] = info
+
+    for line in lines:
+        f = FRAME.search(line)
+        info = places.get((f["module"], f["addr"])) if f else None
+        if info:
+            func, loc = info
+            if "  ??  (" in line and func != "??":
+                line = line.replace("  ??  (", f"  {func}  (", 1)
+            line = f"{line}  at {loc}"
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

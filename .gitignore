@@ -1,0 +1,7 @@
+build/
+build-*/
+heapfdr-crash-*.log
+__pycache__/
+*.o
+*.so
+.vscode/

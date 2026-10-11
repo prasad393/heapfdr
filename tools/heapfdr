@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Run a program with heapfdr preloaded.
+#
+#   heapfdr ./my-program [args...]
+#
+# Options are environment variables (HEAPFDR_DEPTH, HEAPFDR_TOP, ...),
+# see the README.
+set -euo pipefail
+
+if [[ $# -eq 0 || $1 == -h || $1 == --help ]]; then
+    echo "usage: heapfdr <program> [args...]" >&2
+    [[ $# -eq 0 ]] && exit 2 || exit 0
+fi
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+lib=${HEAPFDR_LIB:-}
+
+if [[ -z $lib ]]; then
+    for candidate in "$here/libheapfdr.so" "$here/../lib/libheapfdr.so" "$here/../build/libheapfdr.so"; do
+        if [[ -f $candidate ]]; then
+            lib=$candidate
+            break
+        fi
+    done
+fi
+
+if [[ -z $lib || ! -f $lib ]]; then
+    echo "heapfdr: cannot find libheapfdr.so (build it, or set HEAPFDR_LIB)" >&2
+    exit 1
+fi
+
+lib="$(cd "$(dirname "$lib")" && pwd)/$(basename "$lib")"
+export LD_PRELOAD="$lib${LD_PRELOAD:+:$LD_PRELOAD}"
+exec "$@"
